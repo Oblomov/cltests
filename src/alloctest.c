@@ -1,5 +1,6 @@
 /* Demonstrate OpenCL overallocation and buffer juggling */
 
+#include <string.h>
 #include <CL/cl.h>
 
 #include "error.h"
@@ -28,19 +29,27 @@ cl_uint nbuf; // number of buffers to allocate
 cl_mem *buf; // array of allocated buffers
 
 cl_uint nels; // number of elements that fit in the allocated arrays
+cl_uint e; // index to iterate over buffer elements on CPU
+float *hbuf; // host buffer pointer
 
 // kernel to force usage of the buffer
 const char *src[] = {
 "kernel void add(global float *dst, global const float *src, uint n) {\n",
 "	uint i = get_global_id(0);\n",
-"	if (i < n) dst[i] = src[i];\n",
+"	if (i < n) dst[i] += src[i];\n",
 "}"
 };
+
+// expected result at a given timestep
+float expected;
 
 cl_program pg; // program
 cl_kernel k; // actual kernel
 size_t gws ; // global work size
 size_t wgm ; // preferred workgroup size multiple (will be used as local size too)
+
+// sync events for mem/launch ops
+cl_event mem_evt, krn_evt;
 
 // macroto round size to the next multiple of base
 #define ROUND_MUL(size, base) \
@@ -162,21 +171,61 @@ int main(int argc, char *argv[])
 	}
 
 	for (i = 0; i < nbuf; ++i) {
-		buf[i] = clCreateBuffer(ctx, CL_MEM_ALLOC_HOST_PTR, alloc_max,
+		buf[i] = clCreateBuffer(ctx, CL_MEM_ALLOC_HOST_PTR | CL_MEM_READ_WRITE, alloc_max,
 				NULL, &error);
 		CHECK_ERROR("allocating buffer");
 		printf("buffer %u allocated\n", i);
 	}
 
+	// memset the first buffer
+	hbuf = clEnqueueMapBuffer(q, buf[0], CL_TRUE, CL_MAP_WRITE_INVALIDATE_REGION,
+			0, alloc_max, 0, NULL, NULL, &error);
+	CHECK_ERROR("mapping buffer 0");
+	memset(hbuf, 0, alloc_max);
+	error = clEnqueueUnmapMemObject(q, buf[0], hbuf, 0, NULL, NULL);
+	CHECK_ERROR("unmapping buffer 0");
+	hbuf = NULL;
+
 	// use the buffers
 	for (i = 1; i < nbuf; ++i) {
+		printf("testing buffer %u\n", i);
+
+		// for each buffer, we do a setup on CPU and then use it as second
+		// argument for the kernel
+		hbuf = clEnqueueMapBuffer(q, buf[i], CL_TRUE, CL_MAP_WRITE_INVALIDATE_REGION,
+				0, alloc_max, 0, NULL, NULL, &error);
+		CHECK_ERROR("mapping buffer");
+		for (e = 0; e < nels; ++e)
+			hbuf[e] = i;
+		error = clEnqueueUnmapMemObject(q, buf[i], hbuf, 0, NULL, NULL);
+		CHECK_ERROR("unmapping buffer");
+		hbuf = NULL;
+
+		// make sure all pending actions are completed
+		error =	clFinish(q);
+		CHECK_ERROR("settling down");
+
 		clSetKernelArg(k, 0, sizeof(buf[0]), buf);
 		clSetKernelArg(k, 1, sizeof(buf[i]), buf + i);
 		clSetKernelArg(k, 2, sizeof(nels), &nels);
-		clEnqueueNDRangeKernel(q, k, 1, NULL, &gws, &wgm,
-				0, NULL, NULL);
-		printf("testing buffer %u\n", i);
-		clFinish(q);
+		error = clEnqueueNDRangeKernel(q, k, 1, NULL, &gws, &wgm,
+				0, NULL, &krn_evt);
+		CHECK_ERROR("enqueueing kernel");
+
+		expected = i*(i+1)/2.0f;
+		hbuf = clEnqueueMapBuffer(q, buf[0], CL_TRUE, CL_MAP_READ,
+				0, alloc_max, 1, &krn_evt, NULL, &error);
+		CHECK_ERROR("mapping buffer 0");
+		for (e = 0; e < nels; ++e)
+			if (hbuf[e] != expected) {
+				fprintf(stderr, "mismatch @ %u: %g instead of %g\n",
+						e, hbuf[e], expected);
+				exit(1);
+			}
+		error = clEnqueueUnmapMemObject(q, buf[0], hbuf, 0, NULL, NULL);
+		CHECK_ERROR("unmapping buffer 0");
+		hbuf = NULL;
+		clReleaseEvent(krn_evt); // free up the kernel event
 	}
 
 	for (i = 1; i <= nbuf; ++i) {
