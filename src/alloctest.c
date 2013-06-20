@@ -201,6 +201,13 @@ int main(int argc, char *argv[])
 		CHECK_ERROR("unmapping buffer");
 		hbuf = NULL;
 
+		// migrate previous buffer out of the GPU
+		if (i > 1) {
+			error = clEnqueueMigrateMemObjects(q, 1, buf + i-1,
+					CL_MIGRATE_MEM_OBJECT_HOST | CL_MIGRATE_MEM_OBJECT_CONTENT_UNDEFINED,
+					0, NULL, NULL);
+			CHECK_ERROR("migrating previous buffer to host");
+		}
 		// make sure all pending actions are completed
 		error =	clFinish(q);
 		CHECK_ERROR("settling down");
