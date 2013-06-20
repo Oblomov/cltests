@@ -1,0 +1,14 @@
+This is a collection of rather simple tools whose purpose is to try out
+specific OpenCL features. Although it might be of assistance in checking
+if specific implementations behave as expected in specific cases, it is
+not aimed at that.
+
+Currently the following tests are available:
+
+alloctest:
+	check if it's possible to overcommit the memory of a compute
+	device by allocating enough large buffers that not all of them
+	may be physically present on the device at the same time. The
+	OpenCL 1.2 memobject migration feature is used to give hints to
+	the platform on when it is feasible to migrate a buffer out of
+	the device.
