@@ -26,7 +26,8 @@ size_t gmem; // device global memory size
 size_t alloc_max; // max single-buffer-size on device
 
 cl_uint nbuf; // number of buffers to allocate
-cl_mem *buf; // array of allocated buffers
+cl_mem *hostbuf; // array of ‘host’ buffers
+cl_mem devbuf[2]; // array of ‘device’ buffers
 
 cl_uint nels; // number of elements that fit in the allocated arrays
 cl_uint e; // index to iterate over buffer elements on CPU
@@ -159,68 +160,82 @@ int main(int argc, char *argv[])
 
 #define MB (1024*1024.0)
 
-	printf("will try allocating %u buffers of %gMB each to overcommit %gMB\n",
+	printf("will try allocating %u host buffers of %gMB each to overcommit %gMB\n",
 			nbuf, alloc_max/MB, gmem/MB);
 
-	buf = calloc(nbuf, sizeof(cl_mem));
+	hostbuf = calloc(nbuf, sizeof(cl_mem));
 
-	if (!buf) {
+	if (!hostbuf) {
 		fprintf(stderr, "could not prepare support for %u buffers\n", nbuf);
 		exit(1);
 	}
 
+	// allocate ‘host’ buffers
 	for (i = 0; i < nbuf; ++i) {
-		buf[i] = clCreateBuffer(ctx, CL_MEM_ALLOC_HOST_PTR | CL_MEM_READ_WRITE, alloc_max,
+		hostbuf[i] = clCreateBuffer(ctx, CL_MEM_ALLOC_HOST_PTR | CL_MEM_READ_ONLY, alloc_max,
 				NULL, &error);
-		CHECK_ERROR("allocating buffer");
-		printf("buffer %u allocated\n", i);
+		CHECK_ERROR("allocating host buffer");
+		printf("host buffer %u allocated\n", i);
+		error = clEnqueueMigrateMemObjects(q, 1, hostbuf + i,
+				CL_MIGRATE_MEM_OBJECT_HOST | CL_MIGRATE_MEM_OBJECT_CONTENT_UNDEFINED,
+				0, NULL, NULL);
+		CHECK_ERROR("migrating buffer to host");
+		printf("buffer %u migrated to host\n", i);
 	}
 
-	// memset the first buffer
-	hbuf = clEnqueueMapBuffer(q, buf[0], CL_TRUE, CL_MAP_WRITE_INVALIDATE_REGION,
-			0, alloc_max, 0, NULL, NULL, &error);
-	CHECK_ERROR("mapping buffer 0");
-	memset(hbuf, 0, alloc_max);
-	error = clEnqueueUnmapMemObject(q, buf[0], hbuf, 0, NULL, NULL);
-	CHECK_ERROR("unmapping buffer 0");
-	hbuf = NULL;
+	// allocate ‘device’ buffers
+	for (i = 0; i < 2; ++i) {
+		devbuf[i] = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS, alloc_max,
+				NULL, &error);
+		CHECK_ERROR("allocating devbuffer");
+		printf("dev buffer %u allocated\n", i);
+		if (i == 0) {
+			float patt = 0;
+			error = clEnqueueFillBuffer(q, devbuf[0], &patt, sizeof(patt),
+					0, nels*sizeof(patt), 0, NULL, &mem_evt);
+			CHECK_ERROR("enqueueing memset");
+		}
+	}
+	error = clWaitForEvents(1, &mem_evt);
+	CHECK_ERROR("waiting for buffer fill");
+	clReleaseEvent(mem_evt); mem_evt = NULL;
 
 	// use the buffers
-	for (i = 1; i < nbuf; ++i) {
+	for (i = 0; i < nbuf; ++i) {
 		printf("testing buffer %u\n", i);
 
 		// for each buffer, we do a setup on CPU and then use it as second
 		// argument for the kernel
-		hbuf = clEnqueueMapBuffer(q, buf[i], CL_TRUE, CL_MAP_WRITE_INVALIDATE_REGION,
+		hbuf = clEnqueueMapBuffer(q, hostbuf[i], CL_TRUE, CL_MAP_WRITE_INVALIDATE_REGION,
 				0, alloc_max, 0, NULL, NULL, &error);
 		CHECK_ERROR("mapping buffer");
 		for (e = 0; e < nels; ++e)
 			hbuf[e] = i;
-		error = clEnqueueUnmapMemObject(q, buf[i], hbuf, 0, NULL, NULL);
+		error = clEnqueueUnmapMemObject(q, hostbuf[i], hbuf, 0, NULL, NULL);
 		CHECK_ERROR("unmapping buffer");
 		hbuf = NULL;
 
-		// migrate previous buffer out of the GPU
-		if (i > 1) {
-			error = clEnqueueMigrateMemObjects(q, 1, buf + i-1,
-					CL_MIGRATE_MEM_OBJECT_HOST | CL_MIGRATE_MEM_OBJECT_CONTENT_UNDEFINED,
-					0, NULL, NULL);
-			CHECK_ERROR("migrating previous buffer to host");
-		}
+		// copy ‘host’ to ‘device’ buffer
+		clEnqueueCopyBuffer(q, hostbuf[i], devbuf[1], 0, 0, alloc_max,
+				0, NULL, NULL);
 		// make sure all pending actions are completed
 		error =	clFinish(q);
 		CHECK_ERROR("settling down");
 
-		clSetKernelArg(k, 0, sizeof(buf[0]), buf);
-		clSetKernelArg(k, 1, sizeof(buf[i]), buf + i);
+		clSetKernelArg(k, 0, sizeof(cl_mem), devbuf);
+		clSetKernelArg(k, 1, sizeof(cl_mem), devbuf + 1);
 		clSetKernelArg(k, 2, sizeof(nels), &nels);
 		error = clEnqueueNDRangeKernel(q, k, 1, NULL, &gws, &wgm,
 				0, NULL, &krn_evt);
 		CHECK_ERROR("enqueueing kernel");
 
+		error = clEnqueueCopyBuffer(q, devbuf[0], hostbuf[0],
+				0, 0, alloc_max, 1, &krn_evt, &mem_evt);
+		CHECK_ERROR("copying data to host");
+
 		expected = i*(i+1)/2.0f;
-		hbuf = clEnqueueMapBuffer(q, buf[0], CL_TRUE, CL_MAP_READ,
-				0, alloc_max, 1, &krn_evt, NULL, &error);
+		hbuf = clEnqueueMapBuffer(q, hostbuf[0], CL_TRUE, CL_MAP_READ,
+				0, alloc_max, 1, &mem_evt, NULL, &error);
 		CHECK_ERROR("mapping buffer 0");
 		for (e = 0; e < nels; ++e)
 			if (hbuf[e] != expected) {
@@ -228,15 +243,21 @@ int main(int argc, char *argv[])
 						e, hbuf[e], expected);
 				exit(1);
 			}
-		error = clEnqueueUnmapMemObject(q, buf[0], hbuf, 0, NULL, NULL);
+		error = clEnqueueUnmapMemObject(q, hostbuf[0], hbuf, 0, NULL, NULL);
 		CHECK_ERROR("unmapping buffer 0");
 		hbuf = NULL;
-		clReleaseEvent(krn_evt); // free up the kernel event
+		clReleaseEvent(krn_evt);
+		clReleaseEvent(mem_evt);
+		krn_evt = mem_evt = NULL;
 	}
 
+	for (i = 1; i <= 2; ++i) {
+		clReleaseMemObject(devbuf[2 - i]);
+		printf("dev buffer %u freed\n", nbuf  - i);
+	}
 	for (i = 1; i <= nbuf; ++i) {
-		clReleaseMemObject(buf[nbuf - i]);
-		printf("buffer %u freed\n", nbuf  - i);
+		clReleaseMemObject(hostbuf[nbuf - i]);
+		printf("host buffer %u freed\n", nbuf  - i);
 	}
 
 	return 0;
