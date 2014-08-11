@@ -9,6 +9,8 @@ TGT=$(patsubst %.c,%,$(SRC))
 
 LDLIBS=-lOpenCL
 
+CFLAGS=-g -Wall
+
 all: $(TGT)
 
 $(OBJ): %.o: %.c $(HDR)
