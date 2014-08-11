@@ -51,7 +51,7 @@ size_t wgm ; // preferred workgroup size multiple (will be used as local size to
 // sync events for mem/launch ops
 cl_event mem_evt, krn_evt;
 
-// macroto round size to the next multiple of base
+// macro to round size to the next multiple of base
 #define ROUND_MUL(size, base) \
 	((size + base - 1)/base)*base
 
