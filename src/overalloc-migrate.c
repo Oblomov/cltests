@@ -66,6 +66,9 @@ int main(int argc, char *argv[])
 	// generic iterator
 	cl_uint i;
 
+	// major/minor version of the platform OpenCL version
+	uint ocl_major, ocl_minor;
+
 	// set platform/device num from command line
 	if (argc > 1)
 		pn = atoi(argv[1]);
@@ -87,9 +90,25 @@ int main(int argc, char *argv[])
 
 	// choose platform
 	p = platform[pn];
+
 	error = clGetPlatformInfo(p, CL_PLATFORM_NAME, BUFSZ, strbuf, NULL);
 	CHECK_ERROR("getting platform name");
 	printf("using platform %u: %s\n", pn, strbuf);
+
+	error = clGetPlatformInfo(p, CL_PLATFORM_VERSION, BUFSZ, strbuf, NULL);
+	CHECK_ERROR("getting platform version");
+	// we need 1.2 at least
+	i = sscanf(strbuf, "OpenCL %u.%u ", &ocl_major, &ocl_minor);
+	if (i != 2) {
+		fprintf(stderr, "%s:%u: unable to determine platform OpenCL version\n",
+			__func__, __LINE__);
+		exit(1);
+	}
+	if (ocl_major == 1 && ocl_minor < 2) {
+		fprintf(stderr, "%s:%u: Platform version %s is not at least 1.2\n",
+			__func__, __LINE__, strbuf);
+		exit(1);
+	}
 
 	error = clGetDeviceIDs(p, CL_DEVICE_TYPE_ALL, 0, NULL, &nd);
 	CHECK_ERROR("getting amount of device IDs");
