@@ -9,7 +9,7 @@ TGT=$(patsubst %.c,%,$(SRC))
 
 LDLIBS=-lOpenCL
 
-CFLAGS=-g -Wall
+CFLAGS=-std=c99 -g -Wall
 
 all: $(TGT)
 
