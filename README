@@ -27,3 +27,7 @@ overalloc-migrate-copy:
 	during buffer use copy the current ‘host’ buffer to the
 	appropriate ‘device’ buffer and use the ‘device’ buffer only in
 	the kernel.
+
+bandwidth:
+	a bandwidth test to check how the CL_MEM_*_HOST_PTR flags affect
+	kernel and map performance.
