@@ -1,6 +1,7 @@
 /* Demonstrate OpenCL overallocation and buffer juggling */
 
 #include <string.h>
+#include <stdlib.h>
 #include <CL/cl.h>
 
 #include "error.h"
@@ -59,7 +60,11 @@ cl_event set_event, add_event, map_event;
 #define ROUND_MUL(size, base) \
 	((size + base - 1)/base)*base
 
-void event_perf(cl_event evt, size_t nbytes, const char *name)
+/* print the event runtime in ms, bandwidth in GB/s assuming
+ * nbytes total gmem access (read + write), return runtime
+ * in ms
+ */
+double event_perf(cl_event evt, size_t nbytes, const char *name)
 {
 	cl_ulong start, end;
 	error = clGetEventProfilingInfo(evt, CL_PROFILING_COMMAND_START,
@@ -71,8 +76,15 @@ void event_perf(cl_event evt, size_t nbytes, const char *name)
 	double time_ms = (end - start)*1.0e-6;
 	double bandwidth = (double)(nbytes)/(end - start);
 	printf("%s runtime: %gms, B/W: %gGB/s\n", name, time_ms, bandwidth);
+	return time_ms;
 }
 
+int compare_double(const void *_a, const void *_b)
+{
+	const double *a = (const double*)_a;
+	const double *b = (const double*)_b;
+	return *a - *b;
+}
 
 int main(int argc, char *argv[])
 {
@@ -197,7 +209,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	// we try three times, once with no flags, once with USE_HOST_PTR and once with ALLOC_HOST_PTR
+	// we try multiple configurations: no HOST_PTR flags, USE_HOST_PTR and ALLOC_HOST_PTR
 	const cl_mem_flags buf_flags[] = {
 		CL_MEM_READ_WRITE,
 		CL_MEM_USE_HOST_PTR | CL_MEM_READ_WRITE,
@@ -205,9 +217,16 @@ int main(int argc, char *argv[])
 		CL_MEM_READ_WRITE,
 	};
 
+	const size_t nturns = sizeof(buf_flags)/sizeof(*buf_flags);
+	const size_t nloops = 5; // number of loops for each turn, for stats
+	const size_t gmem_bytes_rw = sizeof(float)*2*nels;
+
 	const char * const flag_names[] = {
 		"(none)", "USE_HOST_PTR", "ALLOC_HOST_PTR", "(none)"
 	};
+
+	double runtimes[nturns][3][nloops]; /* set, add, map */
+	memset(runtimes, 0, nturns*sizeof(*runtimes));
 
 	hbuf = calloc(nbuf, sizeof(*hbuf));
 	if (!hbuf) {
@@ -230,30 +249,39 @@ int main(int argc, char *argv[])
 			printf("buffer %u allocated\n", i);
 		}
 
-		clSetKernelArg(k_set, 0, sizeof(buf[0]), buf);
-		clSetKernelArg(k_set, 1, sizeof(buf[1]), buf + 1);
-		clSetKernelArg(k_set, 2, sizeof(nels), &nels);
-		error = clEnqueueNDRangeKernel(q, k_set, 1, NULL, &gws, NULL,
-				0, NULL, &set_event);
-		CHECK_ERROR("enqueueing kernel set");
+		for (size_t loop = 0; loop < nloops; ++loop) {
+			clSetKernelArg(k_set, 0, sizeof(buf[0]), buf);
+			clSetKernelArg(k_set, 1, sizeof(buf[1]), buf + 1);
+			clSetKernelArg(k_set, 2, sizeof(nels), &nels);
+			error = clEnqueueNDRangeKernel(q, k_set, 1, NULL, &gws, NULL,
+					0, NULL, &set_event);
+			CHECK_ERROR("enqueueing kernel set");
 
-		clSetKernelArg(k_add, 0, sizeof(buf[0]), buf);
-		clSetKernelArg(k_add, 1, sizeof(buf[1]), buf + 1);
-		clSetKernelArg(k_add, 2, sizeof(nels), &nels);
-		error = clEnqueueNDRangeKernel(q, k_add, 1, NULL, &gws, NULL,
-				1, &set_event, &add_event);
-		CHECK_ERROR("enqueueing kernel add");
+			clSetKernelArg(k_add, 0, sizeof(buf[0]), buf);
+			clSetKernelArg(k_add, 1, sizeof(buf[1]), buf + 1);
+			clSetKernelArg(k_add, 2, sizeof(nels), &nels);
+			error = clEnqueueNDRangeKernel(q, k_add, 1, NULL, &gws, NULL,
+					1, &set_event, &add_event);
+			CHECK_ERROR("enqueueing kernel add");
 
-		float *hmap = clEnqueueMapBuffer(q, buf[0], CL_TRUE,
-			CL_MAP_READ, 0, alloc_max, 1, &add_event, &map_event, &error);
-		CHECK_ERROR("map");
+			float *hmap = clEnqueueMapBuffer(q, buf[0], CL_TRUE,
+				CL_MAP_READ, 0, alloc_max, 1, &add_event, &map_event, &error);
+			CHECK_ERROR("map");
 
-		printf("Turn %zu: %s\n", turn, flag_names[turn]);
-		event_perf(set_event, sizeof(*hmap)*2*nels, "set");
-		event_perf(add_event, sizeof(*hmap)*2*nels, "add");
-		event_perf(map_event, alloc_max, "map");
+			printf("Turn %zu, loop %zu: %s\n", turn, loop, flag_names[turn]);
+			runtimes[turn][0][loop] = event_perf(set_event, gmem_bytes_rw, "set");
+			runtimes[turn][1][loop] = event_perf(add_event, gmem_bytes_rw, "add");
+			runtimes[turn][2][loop] = event_perf(map_event, alloc_max, "map");
 
-		clEnqueueUnmapMemObject(q, buf[0], hmap, 0, NULL, NULL);
+			clEnqueueUnmapMemObject(q, buf[0], hmap, 0, NULL, NULL);
+
+			clFinish(q);
+
+			// release the events
+			clReleaseEvent(set_event);
+			clReleaseEvent(add_event);
+			clReleaseEvent(map_event);
+		}
 
 		// release the buffers
 		for (i = 0; i < nbuf; ++i) {
@@ -264,13 +292,61 @@ int main(int argc, char *argv[])
 			clReleaseMemObject(buf[i]);
 		}
 
-		// and the events
-		clReleaseEvent(set_event);
-		clReleaseEvent(add_event);
-		clReleaseEvent(map_event);
-
-		clFinish(q);
 	}
+
+	puts("Summary/stats:");
+
+	for (size_t turn = 0; turn < nturns; ++turn) {
+		double avg[3] = {0};
+
+		/* I'm lazy, so sort with qsort and then compute average,
+		 * otherwise we could just compute min, max, avg and median together */
+		qsort(runtimes[turn][0], nloops, sizeof(double), compare_double);
+		qsort(runtimes[turn][1], nloops, sizeof(double), compare_double);
+		qsort(runtimes[turn][2], nloops, sizeof(double), compare_double);
+		for (size_t loop = 0; loop < nloops; ++loop) {
+			avg[0] += runtimes[turn][0][loop];
+			avg[1] += runtimes[turn][1][loop];
+			avg[2] += runtimes[turn][2][loop];
+		}
+		avg[0] /= nloops;
+		avg[1] /= nloops;
+		avg[2] /= nloops;
+
+		printf("Turn %zu: %s\n", turn, flag_names[turn]);
+		printf("set\ttime (ms): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+			runtimes[turn][0][0],
+			runtimes[turn][0][(nloops + 1)/2],
+			runtimes[turn][0][nloops - 1],
+			avg[0]);
+		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+			gmem_bytes_rw/runtimes[turn][0][0]*1.0e-6,
+			gmem_bytes_rw/runtimes[turn][0][(nloops + 1)/2]*1.0e-6,
+			gmem_bytes_rw/runtimes[turn][0][nloops - 1]*1.0e-6,
+			gmem_bytes_rw/avg[0]*1.0e-6);
+		printf("add\ttime (ms): min: %8g,, median: %8g max: %8g, avg: %8g\n",
+			runtimes[turn][1][0],
+			runtimes[turn][1][(nloops + 1)/2],
+			runtimes[turn][1][nloops - 1],
+			avg[1]);
+		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+			gmem_bytes_rw/runtimes[turn][1][0]*1.0e-6,
+			gmem_bytes_rw/runtimes[turn][1][(nloops + 1)/2]*1.0e-6,
+			gmem_bytes_rw/runtimes[turn][1][nloops - 1]*1.0e-6,
+			gmem_bytes_rw/avg[1]*1.0e-6);
+		printf("map\ttime (ms): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+			runtimes[turn][2][0],
+			runtimes[turn][2][(nloops + 1)/2],
+			runtimes[turn][2][nloops - 1],
+			avg[2]);
+		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+			alloc_max/runtimes[turn][2][0]*1.0e-6,
+			alloc_max/runtimes[turn][2][(nloops + 1)/2]*1.0e-6,
+			alloc_max/runtimes[turn][2][nloops - 1]*1.0e-6,
+			alloc_max/avg[2]*1.0e-6);
+
+	}
+
 
 	return 0;
 }
