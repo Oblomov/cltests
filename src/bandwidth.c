@@ -251,7 +251,7 @@ int main(int argc, char *argv[])
 		printf("Turn %zu: %s\n", turn, flag_names[turn]);
 		event_perf(set_event, sizeof(*hmap)*2*nels, "set");
 		event_perf(add_event, sizeof(*hmap)*2*nels, "add");
-		event_perf(add_event, alloc_max, "map");
+		event_perf(map_event, alloc_max, "map");
 
 		clEnqueueUnmapMemObject(q, buf[0], hmap, 0, NULL, NULL);
 
