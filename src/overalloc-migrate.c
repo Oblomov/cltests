@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
 	cl_uint i;
 
 	// major/minor version of the platform OpenCL version
-	uint ocl_major, ocl_minor;
+	cl_uint ocl_major, ocl_minor;
 
 	// set platform/device num from command line
 	if (argc > 1)
