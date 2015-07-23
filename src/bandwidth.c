@@ -25,6 +25,7 @@ char strbuf[BUFSZ];
 
 size_t gmem; // device global memory size
 size_t alloc_max; // max single-buffer-size on device
+size_t buf_size; // actual buffer size
 
 cl_uint nbuf; // number of buffers to allocate
 cl_mem *buf; // array of allocated buffers
@@ -204,21 +205,29 @@ int main(int argc, char *argv[])
 			sizeof(wgm), &wgm, NULL);
 	CHECK_ERROR("getting preferred workgroup size multiple");
 
-	// number of elements on which kernel will be launched. it's ok if we don't
-	// cover every byte of the buffers
-	nels = alloc_max/sizeof(cl_float)/vec_width;
+	// we allocate two buffers
+	nbuf = 2;
+
+	// reduce buffer allocation size to ensure we can fit all buffer
+	// into the device memory
+	if (alloc_max > gmem/nbuf)
+		buf_size = gmem/nbuf;
+	else
+		buf_size = alloc_max;
+
+	// number of elements that fit in the given buf_size
+	nels = buf_size/sizeof(cl_float)/vec_width;
+	// set the buffer size to match exactly what we need
+	buf_size = nels*sizeof(cl_float)*vec_width;
 
 	gws = ROUND_MUL(nels, wgm);
 
 	printf("will use %zu workitems to process %u elements of type %s\n",
 			gws, nels, type_def + 7);
 
-	// we allocate two buffers
-	nbuf = 2;
-
 #define MB (1024*1024.0)
 
-	printf("will try allocating %u buffers of %gMB each\n", nbuf, alloc_max/MB);
+	printf("will try allocating %u buffers of %gMB each\n", nbuf, buf_size/MB);
 
 	buf = calloc(nbuf, sizeof(cl_mem));
 
@@ -237,7 +246,7 @@ int main(int argc, char *argv[])
 
 	const size_t nturns = sizeof(buf_flags)/sizeof(*buf_flags);
 	const size_t nloops = 5; // number of loops for each turn, for stats
-	const size_t gmem_bytes_rw = sizeof(cl_float)*2*nels*vec_width;
+	const size_t gmem_bytes_rw = 2*buf_size;
 
 	const char * const flag_names[] = {
 		"(none)", "USE_HOST_PTR", "ALLOC_HOST_PTR", "(none)"
@@ -255,13 +264,13 @@ int main(int argc, char *argv[])
 	for (size_t turn = 0; turn < sizeof(buf_flags)/sizeof(*buf_flags); ++turn) {
 		for (i = 0; i < nbuf; ++i) {
 			if (buf_flags[turn] & CL_MEM_USE_HOST_PTR) {
-				hbuf[i] = calloc(alloc_max, 1);
+				hbuf[i] = calloc(buf_size, 1);
 				if (!hbuf[i]) {
 					fputs("couldn't allocate host buffer array\n", stderr);
 					exit(1);
 				}
 			}
-			buf[i] = clCreateBuffer(ctx, buf_flags[turn], alloc_max,
+			buf[i] = clCreateBuffer(ctx, buf_flags[turn], buf_size,
 				hbuf[i], &error);
 			CHECK_ERROR("allocating buffer");
 			printf("buffer %u allocated\n", i);
@@ -283,13 +292,13 @@ int main(int argc, char *argv[])
 			CHECK_ERROR("enqueueing kernel add");
 
 			float *hmap = clEnqueueMapBuffer(q, buf[0], CL_TRUE,
-				CL_MAP_READ, 0, alloc_max, 1, &add_event, &map_event, &error);
+				CL_MAP_READ, 0, buf_size, 1, &add_event, &map_event, &error);
 			CHECK_ERROR("map");
 
 			printf("Turn %zu, loop %zu: %s\n", turn, loop, flag_names[turn]);
 			runtimes[turn][0][loop] = event_perf(set_event, gmem_bytes_rw, "set");
 			runtimes[turn][1][loop] = event_perf(add_event, gmem_bytes_rw, "add");
-			runtimes[turn][2][loop] = event_perf(map_event, alloc_max, "map");
+			runtimes[turn][2][loop] = event_perf(map_event, buf_size, "map");
 
 			clEnqueueUnmapMemObject(q, buf[0], hmap, 0, NULL, NULL);
 
@@ -358,10 +367,10 @@ int main(int argc, char *argv[])
 			runtimes[turn][2][nloops - 1],
 			avg[2]);
 		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
-			alloc_max/runtimes[turn][2][0]*1.0e-6,
-			alloc_max/runtimes[turn][2][(nloops + 1)/2]*1.0e-6,
-			alloc_max/runtimes[turn][2][nloops - 1]*1.0e-6,
-			alloc_max/avg[2]*1.0e-6);
+			buf_size/runtimes[turn][2][0]*1.0e-6,
+			buf_size/runtimes[turn][2][(nloops + 1)/2]*1.0e-6,
+			buf_size/runtimes[turn][2][nloops - 1]*1.0e-6,
+			buf_size/avg[2]*1.0e-6);
 
 	}
 
