@@ -35,11 +35,11 @@ float **hbuf; // host buffer pointers
 
 // kernel to force usage of the buffer
 const char *src[] = {
-"kernel void set(global float * restrict dst, global float * restrict src, uint n) {\n",
+"kernel void set(global TYPE * restrict dst, global TYPE * restrict src, uint n) {\n",
 "	uint i = get_global_id(0);\n",
-"	if (i < n) { dst[i] = 0; src[i] = i; }\n",
+"	if (i < n) { dst[i] = (TYPE)(0); src[i] = (TYPE)(i); }\n",
 "}\n"
-"kernel void add(global float * restrict dst, global const float * restrict src, uint n) {\n",
+"kernel void add(global TYPE * restrict dst, global const TYPE * restrict src, uint n) {\n",
 "	uint i = get_global_id(0);\n",
 "	if (i < n) dst[i] += src[i];\n",
 "}"
@@ -88,6 +88,11 @@ int compare_double(const void *_a, const void *_b)
 
 int main(int argc, char *argv[])
 {
+#define EXTRAROOM 1024
+	char type_def[] = "-DTYPE=floatXX";
+	char* type_ptr= type_def + sizeof(type_def) - 3;
+	cl_uint vec_width = 1;
+
 	// selected platform and device number
 	cl_uint pn = 0, dn = 0;
 
@@ -102,6 +107,18 @@ int main(int argc, char *argv[])
 		pn = atoi(argv[1]);
 	if (argc > 2)
 		dn = atoi(argv[2]);
+	if (argc > 3) {
+		vec_width = atoi(argv[3]);
+		// this should only be 2, 4, 8, 16
+		// if the user passes bogus data, it's their problem.
+		if (vec_width > 1)
+			strncpy(type_ptr, argv[3], 2);
+		if (vec_width == 3)
+			vec_width++;
+	} else {
+		*type_ptr = '\0';
+	}
+
 
 	error = clGetPlatformIDs(0, NULL, &np);
 	CHECK_ERROR("getting amount of platform IDs");
@@ -163,8 +180,9 @@ int main(int argc, char *argv[])
 	CHECK_ERROR("creating program");
 
 	// build program
-	error = clBuildProgram(pg, 1, &d, NULL, NULL, NULL);
-#if 0
+	printf("OpenCL program build options: %s\n", type_def);
+	error = clBuildProgram(pg, 1, &d, type_def, NULL, NULL);
+#if 1
 	if (error == CL_BUILD_PROGRAM_FAILURE) {
 		error = clGetProgramBuildInfo(pg, d, CL_PROGRAM_BUILD_LOG,
 			BUFSZ, strbuf, NULL);
@@ -188,12 +206,12 @@ int main(int argc, char *argv[])
 
 	// number of elements on which kernel will be launched. it's ok if we don't
 	// cover every byte of the buffers
-	nels = alloc_max/sizeof(cl_float);
+	nels = alloc_max/sizeof(cl_float)/vec_width;
 
 	gws = ROUND_MUL(nels, wgm);
 
-	printf("will use %zu workitems to process %u elements\n",
-			gws, nels);
+	printf("will use %zu workitems to process %u elements of type %s\n",
+			gws, nels, type_def + 7);
 
 	// we allocate two buffers
 	nbuf = 2;
@@ -219,7 +237,7 @@ int main(int argc, char *argv[])
 
 	const size_t nturns = sizeof(buf_flags)/sizeof(*buf_flags);
 	const size_t nloops = 5; // number of loops for each turn, for stats
-	const size_t gmem_bytes_rw = sizeof(float)*2*nels;
+	const size_t gmem_bytes_rw = sizeof(cl_float)*2*nels*vec_width;
 
 	const char * const flag_names[] = {
 		"(none)", "USE_HOST_PTR", "ALLOC_HOST_PTR", "(none)"
@@ -324,7 +342,7 @@ int main(int argc, char *argv[])
 			gmem_bytes_rw/runtimes[turn][0][(nloops + 1)/2]*1.0e-6,
 			gmem_bytes_rw/runtimes[turn][0][nloops - 1]*1.0e-6,
 			gmem_bytes_rw/avg[0]*1.0e-6);
-		printf("add\ttime (ms): min: %8g,, median: %8g max: %8g, avg: %8g\n",
+		printf("add\ttime (ms): min: %8g, median: %8g max: %8g, avg: %8g\n",
 			runtimes[turn][1][0],
 			runtimes[turn][1][(nloops + 1)/2],
 			runtimes[turn][1][nloops - 1],
