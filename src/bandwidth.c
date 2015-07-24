@@ -251,6 +251,7 @@ int main(int argc, char *argv[])
 
 	const size_t nturns = sizeof(buf_flags)/sizeof(*buf_flags);
 	const size_t nloops = 5; // number of loops for each turn, for stats
+	const size_t median = nloops/2; // location of median value after sorting
 	const size_t gmem_bytes_rw = 2*buf_size;
 
 	const char * const flag_names[] = {
@@ -348,32 +349,32 @@ int main(int argc, char *argv[])
 		printf("Turn %zu: %s\n", turn, flag_names[turn]);
 		printf("set\ttime (ms): min: %8g, median: %8g, max: %8g, avg: %8g\n",
 			runtimes[turn][0][0],
-			runtimes[turn][0][(nloops + 1)/2],
+			runtimes[turn][0][median],
 			runtimes[turn][0][nloops - 1],
 			avg[0]);
 		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
 			gmem_bytes_rw/runtimes[turn][0][0]*1.0e-6,
-			gmem_bytes_rw/runtimes[turn][0][(nloops + 1)/2]*1.0e-6,
+			gmem_bytes_rw/runtimes[turn][0][median]*1.0e-6,
 			gmem_bytes_rw/runtimes[turn][0][nloops - 1]*1.0e-6,
 			gmem_bytes_rw/avg[0]*1.0e-6);
 		printf("add\ttime (ms): min: %8g, median: %8g max: %8g, avg: %8g\n",
 			runtimes[turn][1][0],
-			runtimes[turn][1][(nloops + 1)/2],
+			runtimes[turn][1][median],
 			runtimes[turn][1][nloops - 1],
 			avg[1]);
 		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
 			gmem_bytes_rw/runtimes[turn][1][0]*1.0e-6,
-			gmem_bytes_rw/runtimes[turn][1][(nloops + 1)/2]*1.0e-6,
+			gmem_bytes_rw/runtimes[turn][1][median]*1.0e-6,
 			gmem_bytes_rw/runtimes[turn][1][nloops - 1]*1.0e-6,
 			gmem_bytes_rw/avg[1]*1.0e-6);
 		printf("map\ttime (ms): min: %8g, median: %8g, max: %8g, avg: %8g\n",
 			runtimes[turn][2][0],
-			runtimes[turn][2][(nloops + 1)/2],
+			runtimes[turn][2][median],
 			runtimes[turn][2][nloops - 1],
 			avg[2]);
 		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
 			buf_size/runtimes[turn][2][0]*1.0e-6,
-			buf_size/runtimes[turn][2][(nloops + 1)/2]*1.0e-6,
+			buf_size/runtimes[turn][2][median]*1.0e-6,
 			buf_size/runtimes[turn][2][nloops - 1]*1.0e-6,
 			buf_size/avg[2]*1.0e-6);
 
