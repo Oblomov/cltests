@@ -80,11 +80,16 @@ double event_perf(cl_event evt, size_t nbytes, const char *name)
 	return time_ms;
 }
 
+double signof(double val)
+{
+	return (val > 0) - (val < 0);
+}
+
 int compare_double(const void *_a, const void *_b)
 {
 	const double *a = (const double*)_a;
 	const double *b = (const double*)_b;
-	return *a - *b;
+	return signof(*a - *b);
 }
 
 int main(int argc, char *argv[])
