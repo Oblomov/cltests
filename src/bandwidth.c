@@ -347,32 +347,32 @@ int main(int argc, char *argv[])
 		avg[2] /= nloops;
 
 		printf("Turn %zu: %s\n", turn, flag_names[turn]);
-		printf("set\ttime (ms): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+		printf("set\ttime (ms): best: %8g, median: %8g, worst: %8g, avg: %8g\n",
 			runtimes[turn][0][0],
 			runtimes[turn][0][median],
 			runtimes[turn][0][nloops - 1],
 			avg[0]);
-		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+		printf("\tBW (GB/s): best: %8g, median: %8g, worst: %8g, avg: %8g\n",
 			gmem_bytes_rw/runtimes[turn][0][0]*1.0e-6,
 			gmem_bytes_rw/runtimes[turn][0][median]*1.0e-6,
 			gmem_bytes_rw/runtimes[turn][0][nloops - 1]*1.0e-6,
 			gmem_bytes_rw/avg[0]*1.0e-6);
-		printf("add\ttime (ms): min: %8g, median: %8g max: %8g, avg: %8g\n",
+		printf("add\ttime (ms): best: %8g, median: %8g worst: %8g, avg: %8g\n",
 			runtimes[turn][1][0],
 			runtimes[turn][1][median],
 			runtimes[turn][1][nloops - 1],
 			avg[1]);
-		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+		printf("\tBW (GB/s): best: %8g, median: %8g, worst: %8g, avg: %8g\n",
 			gmem_bytes_rw/runtimes[turn][1][0]*1.0e-6,
 			gmem_bytes_rw/runtimes[turn][1][median]*1.0e-6,
 			gmem_bytes_rw/runtimes[turn][1][nloops - 1]*1.0e-6,
 			gmem_bytes_rw/avg[1]*1.0e-6);
-		printf("map\ttime (ms): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+		printf("map\ttime (ms): best: %8g, median: %8g, worst: %8g, avg: %8g\n",
 			runtimes[turn][2][0],
 			runtimes[turn][2][median],
 			runtimes[turn][2][nloops - 1],
 			avg[2]);
-		printf("\tBW (GB/s): min: %8g, median: %8g, max: %8g, avg: %8g\n",
+		printf("\tBW (GB/s): best: %8g, median: %8g, worst: %8g, avg: %8g\n",
 			buf_size/runtimes[turn][2][0]*1.0e-6,
 			buf_size/runtimes[turn][2][median]*1.0e-6,
 			buf_size/runtimes[turn][2][nloops - 1]*1.0e-6,
