@@ -301,6 +301,9 @@ int main(int argc, char *argv[])
 				CL_MAP_READ, 0, buf_size, 1, &add_event, &map_event, &error);
 			CHECK_ERROR("map");
 
+			error = clWaitForEvents(1, &map_event);
+			CHECK_ERROR("map event");
+
 			printf("Turn %zu, loop %zu: %s\n", turn, loop, flag_names[turn]);
 			runtimes[turn][0][loop] = event_perf(set_event, gmem_bytes_rw, "set");
 			runtimes[turn][1][loop] = event_perf(add_event, gmem_bytes_rw, "add");
