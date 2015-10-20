@@ -32,6 +32,11 @@ bandwidth:
 	a bandwidth test to check how the CL_MEM_*_HOST_PTR flags affect
 	kernel and map performance.
 
+ndrangelatency:
+	test the latencies involved in launching a no-op kernel, from
+	submission to completion. Note: this program automatically tests
+	all devices on all platforms.
+
 command-fail-event:
 	checks if API calls that fail to validate their parameters still
 	generate an event or not
