@@ -34,7 +34,7 @@ static const char *src[] = {
 
 // collect statistics over LOOPS runs
 #define LOOPS 5
-#define MAXWG (1024*1024)
+#define MAXWG (1<<20) /* 2^20 max */
 
 int compare_ulong(const void * restrict _a, const void * restrict _b)
 {
@@ -91,7 +91,8 @@ cl_int test_device(cl_platform_id p, cl_device_id d)
 	nop = clCreateKernel(pg, "nop", &error);
 	CHECK_ERROR("creating kernel nop");
 
-	for (size_t gws = 1; gws <= MAXWG; gws *= 1024) {
+	int gwshift = 10; /* 10 + 5 + 3 + 2 = 20 */
+	for (size_t gws = 1; gws <= MAXWG ; gws *= (1<<gwshift), gwshift = (gwshift+1)/2) {
 		memset(submit_time, 0, sizeof(submit_time));
 		memset(launch_time, 0, sizeof(launch_time));
 		memset(end_time, 0, sizeof(end_time));
